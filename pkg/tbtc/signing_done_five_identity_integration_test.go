@@ -79,9 +79,8 @@ func TestSigningDoneCheck_ExcludedMemberSubstitutesForAttemptMember_FiveIdentiti
 	attemptTimeoutBlock := uint64(1000)
 	attemptMembers := []group.MemberIndex{1, 2, 3}
 
-	for i, check := range checks {
+	for _, check := range checks {
 		check.listen(ctx, message, attemptNumber, attemptTimeoutBlock, attemptMembers)
-		_ = i
 	}
 
 	// The signature is deliberately a fixture: this test isolates the Done
