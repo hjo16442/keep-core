@@ -40,7 +40,7 @@ func TestSigningDoneCheck_ExcludedMemberSubstitutesForAttemptMember_FiveIdentiti
 
 	// Build the canonical group membership mapping from five distinct operator
 	// addresses. The local chain signer can derive addresses for every public key.
-	localChain := ConnectWithKey(groupSize, honestThreshold, privateKeys[0])
+	localChain := ConnectWithKey(privateKeys[0])
 	operators := make([]chain.Address, groupSize)
 	for i, publicKey := range publicKeys {
 		address, err := localChain.Signing().PublicKeyToAddress(publicKey)
