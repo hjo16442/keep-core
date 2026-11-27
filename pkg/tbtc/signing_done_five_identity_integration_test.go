@@ -22,7 +22,7 @@ import (
 // and 3 are selected for the attempt, but member 4 (which is excluded) sends a
 // signing-done message in place of member 3. The current implementation accepts
 // that message because it validates only whole-group membership, not attempt
-// membership.
+// membership. This test is intentionally scoped to message admission and barrier completion.
 func TestSigningDoneCheck_ExcludedMemberSubstitutesForAttemptMember_FiveIdentities(t *testing.T) {
 	const groupSize = 5
 	const honestThreshold = 3
