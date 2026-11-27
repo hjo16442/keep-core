@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,15 +19,10 @@ import (
 	"github.com/keep-network/keep-core/pkg/tecdsa/signing"
 )
 
-// This regression test models five distinct network identities. Members 1, 2,
-// and 3 are selected for the attempt, but member 4 (which is excluded) sends a
-// signing-done message in place of member 3. The current implementation accepts
-// that message because it validates only whole-group membership, not attempt
-// membership. This test is intentionally scoped to message admission and barrier completion.
-func TestSigningDoneCheck_ExcludedMemberSubstitutesForAttemptMember_FiveIdentities(t *testing.T) {
-	const groupSize = 5
-	const honestThreshold = 3
+func setupFiveIdentityDoneChecks(t *testing.T) []*signingDoneCheck {
+	t.Helper()
 
+	const groupSize = 5
 	privateKeys := make([]*operator.PrivateKey, groupSize)
 	publicKeys := make([]*operator.PublicKey, groupSize)
 	for i := 0; i < groupSize; i++ {
@@ -38,8 +34,6 @@ func TestSigningDoneCheck_ExcludedMemberSubstitutesForAttemptMember_FiveIdentiti
 		publicKeys[i] = publicKey
 	}
 
-	// Build the canonical group membership mapping from five distinct operator
-	// addresses. The local chain signer can derive addresses for every public key.
 	localChain := ConnectWithKey(privateKeys[0])
 	operators := make([]chain.Address, groupSize)
 	for i, publicKey := range publicKeys {
@@ -56,7 +50,6 @@ func TestSigningDoneCheck_ExcludedMemberSubstitutesForAttemptMember_FiveIdentiti
 		localChain.Signing(),
 	)
 
-	// Each simulated operator has its own network key and broadcast channel.
 	checks := make([]*signingDoneCheck, groupSize)
 	channelName := fmt.Sprintf("signing-done-five-identities-%d", time.Now().UnixNano())
 	for i, publicKey := range publicKeys {
@@ -71,41 +64,58 @@ func TestSigningDoneCheck_ExcludedMemberSubstitutesForAttemptMember_FiveIdentiti
 		checks[i] = newSigningDoneCheck(groupSize, broadcastChannel, membershipValidator)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
+	return checks
+}
+
+func startFiveIdentityDoneChecks(
+	t *testing.T,
+	checks []*signingDoneCheck,
+	ctx context.Context,
+) (*big.Int, uint64, []group.MemberIndex) {
+	t.Helper()
 
 	message := big.NewInt(0x5151)
 	attemptNumber := uint64(7)
 	attemptTimeoutBlock := uint64(1000)
 	attemptMembers := []group.MemberIndex{1, 2, 3}
-
 	for _, check := range checks {
 		check.listen(ctx, message, attemptNumber, attemptTimeoutBlock, attemptMembers)
 	}
+	return message, attemptNumber, attemptMembers
+}
 
-	// The signature is deliberately a fixture: this test isolates the Done
-	// barrier and does not claim that the excluded member performed TSS signing.
-	copiedTSSResult := &signing.Result{
+func fixtureSigningResult(r int64) *signing.Result {
+	return &signing.Result{
 		Signature: &tecdsa.Signature{
-			R:          big.NewInt(200),
+			R:          big.NewInt(r),
 			S:          big.NewInt(300),
 			RecoveryID: 2,
 		},
 	}
+}
 
-	// Members 1 and 2 are selected; member 4 is excluded but sends a Done
-	// message carrying the same signature. Member 3, a selected member, is
-	// silent. If the barrier completes, the excluded member substituted for 3.
+// This test demonstrates that a whole-group member excluded from the current
+// attempt can substitute for a selected member's Done confirmation. The
+// signature is a fixture; this does not claim to execute the TSS protocol.
+func TestSigningDoneCheck_ExcludedMemberSubstitutesForAttemptMember_FiveIdentities(t *testing.T) {
+	checks := setupFiveIdentityDoneChecks(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	message, attemptNumber, _ := startFiveIdentityDoneChecks(t, checks, ctx)
+	validTSSResult := fixtureSigningResult(200)
+
+	// Members 1 and 2 are selected. Member 4 is excluded but sends a Done
+	// message; selected member 3 remains silent.
 	for _, sender := range []int{0, 1, 3} {
-		err := checks[sender].signalDone(
+		if err := checks[sender].signalDone(
 			ctx,
 			group.MemberIndex(sender+1),
 			message,
 			attemptNumber,
-			copiedTSSResult,
+			validTSSResult,
 			500+uint64(sender+1),
-		)
-		if err != nil {
+		); err != nil {
 			t.Fatalf("identity %d failed to broadcast Done: %v", sender+1, err)
 		}
 	}
@@ -116,12 +126,53 @@ func TestSigningDoneCheck_ExcludedMemberSubstitutesForAttemptMember_FiveIdentiti
 			t.Errorf("receiver identity %d did not complete the Done barrier: %v", i+1, err)
 			continue
 		}
-		if result == nil || result.Signature == nil {
-			t.Errorf("receiver identity %d returned an empty signature", i+1)
-			continue
-		}
-		if !copiedTSSResult.Signature.Equals(result.Signature) {
+		if result == nil || result.Signature == nil ||
+			!validTSSResult.Signature.Equals(result.Signature) {
 			t.Errorf("receiver identity %d returned an unexpected signature", i+1)
+		}
+	}
+}
+
+// This test demonstrates a bounded liveness attack: an excluded whole-group
+// member can inject a conflicting Done message and make the barrier reject the
+// attempt, even though two selected members provide matching signature
+// confirmations. The signature values are fixtures; no TSS bypass is claimed.
+func TestSigningDoneCheck_ExcludedMemberCanPoisonAttempt_FiveIdentities(t *testing.T) {
+	checks := setupFiveIdentityDoneChecks(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	message, attemptNumber, _ := startFiveIdentityDoneChecks(t, checks, ctx)
+	validTSSResult := fixtureSigningResult(200)
+	conflictingResult := fixtureSigningResult(201)
+
+	// Excluded member 4 sends first, then selected members 1 and 2 send the
+	// same result. Selected member 3 is silent. The third accepted message
+	// reaches the expected count but introduces a signature mismatch.
+	for _, senderAndResult := range []struct {
+		sender int
+		result *signing.Result
+	}{
+		{sender: 3, result: conflictingResult},
+		{sender: 0, result: validTSSResult},
+		{sender: 1, result: validTSSResult},
+	} {
+		if err := checks[senderAndResult.sender].signalDone(
+			ctx,
+			group.MemberIndex(senderAndResult.sender+1),
+			message,
+			attemptNumber,
+			senderAndResult.result,
+			700,
+		); err != nil {
+			t.Fatalf("identity %d failed to broadcast Done: %v", senderAndResult.sender+1, err)
+		}
+	}
+
+	for i, check := range checks {
+		result, _, err := check.waitUntilAllDone(ctx)
+		if err == nil || !strings.Contains(err.Error(), "not matching signatures detected") {
+			t.Errorf("receiver identity %d expected signature-mismatch rejection, got result [%v], error [%v]", i+1, result, err)
 		}
 	}
 }
