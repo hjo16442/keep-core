@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math/big"
-	"strings"
 	"testing"
 	"time"
 
@@ -134,45 +133,57 @@ func TestSigningDoneCheck_ExcludedMemberSubstitutesForAttemptMember_FiveIdentiti
 }
 
 // This test demonstrates a bounded liveness attack: an excluded whole-group
-// member can inject a conflicting Done message and make the barrier reject the
-// attempt, even though two selected members provide matching signature
-// confirmations. The signature values are fixtures; no TSS bypass is claimed.
-func TestSigningDoneCheck_ExcludedMemberCanPoisonAttempt_FiveIdentities(t *testing.T) {
+// member can inject an additional Done message. The barrier requires exact
+// equality with the selected-member count, so four accepted senders when three
+// are expected makes completion impossible and forces the attempt to time out.
+// All three selected members also send matching Done messages; no TSS bypass is
+// claimed.
+func TestSigningDoneCheck_ExcludedMemberCanBlockBarrier_FiveIdentities(t *testing.T) {
 	checks := setupFiveIdentityDoneChecks(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 450*time.Millisecond)
 	defer cancel()
 
 	message, attemptNumber, _ := startFiveIdentityDoneChecks(t, checks, ctx)
 	validTSSResult := fixtureSigningResult(200)
-	conflictingResult := fixtureSigningResult(201)
 
-	// Excluded member 4 sends first, then selected members 1 and 2 send the
-	// same result. Selected member 3 is silent. The third accepted message
-	// reaches the expected count but introduces a signature mismatch.
-	for _, senderAndResult := range []struct {
-		sender int
-		result *signing.Result
-	}{
-		{sender: 3, result: conflictingResult},
-		{sender: 0, result: validTSSResult},
-		{sender: 1, result: validTSSResult},
-	} {
-		if err := checks[senderAndResult.sender].signalDone(
+	// Member 4 is excluded, but all three selected members (1, 2, 3) also
+	// broadcast matching Done messages. The extra accepted sender makes the
+	// count 4 while expectedSignersCount remains 3.
+	for _, sender := range []int{3, 0, 1, 2} {
+		if err := checks[sender].signalDone(
 			ctx,
-			group.MemberIndex(senderAndResult.sender+1),
+			group.MemberIndex(sender+1),
 			message,
 			attemptNumber,
-			senderAndResult.result,
+			validTSSResult,
 			700,
 		); err != nil {
-			t.Fatalf("identity %d failed to broadcast Done: %v", senderAndResult.sender+1, err)
+			t.Fatalf("identity %d failed to broadcast Done: %v", sender+1, err)
 		}
 	}
 
+	// Let every receiver process all four broadcasts before checking the
+	// barrier's exact-count condition.
+	time.Sleep(150 * time.Millisecond)
+
 	for i, check := range checks {
-		result, _, err := check.waitUntilAllDone(ctx)
-		if err == nil || !strings.Contains(err.Error(), "not matching signatures detected") {
-			t.Errorf("receiver identity %d expected signature-mismatch rejection, got result [%v], error [%v]", i+1, result, err)
+		check.doneSignersMutex.Lock()
+		acceptedCount := len(check.doneSigners)
+		expectedCount := check.expectedSignersCount
+		check.doneSignersMutex.Unlock()
+
+		if acceptedCount != 4 || expectedCount != 3 {
+			t.Errorf(
+				"receiver identity %d expected 4 accepted senders against 3 expected, got accepted=%d expected=%d",
+				i+1,
+				acceptedCount,
+				expectedCount,
+			)
+		}
+
+		_, _, err := check.waitUntilAllDone(ctx)
+		if err != errWaitDoneTimedOut {
+			t.Errorf("receiver identity %d expected barrier timeout, got [%v]", i+1, err)
 		}
 	}
 }
