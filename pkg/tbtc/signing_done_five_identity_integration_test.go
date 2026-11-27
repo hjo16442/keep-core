@@ -27,12 +27,12 @@ func TestSigningDoneCheck_ExcludedMemberSubstitutesForAttemptMember_FiveIdentiti
 	const groupSize = 5
 	const honestThreshold = 3
 
- privateKeys := make([]*operator.PrivateKey, groupSize)
- publicKeys := make([]*operator.PublicKey, groupSize)
+	privateKeys := make([]*operator.PrivateKey, groupSize)
+	publicKeys := make([]*operator.PublicKey, groupSize)
 	for i := 0; i < groupSize; i++ {
- privateKey, publicKey, err := operator.GenerateKeyPair(local_v1.DefaultCurve)
+		privateKey, publicKey, err := operator.GenerateKeyPair(local_v1.DefaultCurve)
 		if err != nil {
- t.Fatalf("failed to generate identity %d: %v", i+1, err)
+			t.Fatalf("failed to generate identity %d: %v", i+1, err)
 		}
 		privateKeys[i] = privateKey
 		publicKeys[i] = publicKey
