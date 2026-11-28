@@ -294,4 +294,22 @@ func TestWalletRegistry_ArchivedSignerNotLoadedAfterRestart(t *testing.T) {
 	if got := restartedRegistry.getSigners(signer.wallet.publicKey); len(got) != 0 {
 		t.Fatalf("expected no active signers after restart, got [%d]", len(got))
 	}
+
+	// There is no registry-level unarchive method, but an operator with
+	// filesystem access can restore the retained directory to the current
+	// storage area. Verify that a subsequent startup can then load the share.
+	currentWalletPath := filepath.Join(storageDir, "current", walletStorageKey)
+	if err := os.Rename(archivedWalletPath, currentWalletPath); err != nil {
+		t.Fatalf("failed to restore archived wallet data for recovery check: [%v]", err)
+	}
+	recoveredRegistry, err := newWalletRegistry(
+		persistenceHandle,
+		chain.CalculateWalletID,
+	)
+	if err != nil {
+		t.Fatalf("failed to create registry after manual restore: [%v]", err)
+	}
+	if got := recoveredRegistry.getSigners(signer.wallet.publicKey); len(got) != 1 {
+		t.Fatalf("expected one signer after manual restore, got [%d]", len(got))
+	}
 }
