@@ -326,7 +326,7 @@ func TestWalletRegistry_ArchivedSignerNotLoadedAfterRestart(t *testing.T) {
 	// to current is insufficient: startup archives it again before executors
 	// can be created.
 	startupNode := &node{
-		chain:         chain,
+		chain:          chain,
 		walletRegistry: recoveredRegistry,
 	}
 	if err := startupNode.archiveClosedWallets(); err != nil {
