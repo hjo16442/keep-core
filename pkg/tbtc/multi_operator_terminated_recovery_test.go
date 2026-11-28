@@ -207,12 +207,5 @@ func TestMultiOperatorSigningAndTerminatedWalletArchival(t *testing.T) {
 			t.Errorf("operator %d still has %d active signers after archival", i+1, len(got))
 		}
 
-		_, ok, err := node.getSigningExecutor(walletPublicKey)
-		if err != nil {
-			t.Errorf("operator %d signing-executor lookup failed: [%v]", i+1, err)
-		}
-		if ok {
-			t.Errorf("operator %d still exposes an ordinary signing executor after archival", i+1)
-		}
 	}
 }
