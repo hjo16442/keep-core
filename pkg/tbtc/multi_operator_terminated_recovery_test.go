@@ -5,6 +5,8 @@ import (
 	"crypto/ecdsa"
 	"fmt"
 	"math/big"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -17,6 +19,8 @@ import (
 	"github.com/keep-network/keep-core/pkg/operator"
 	"github.com/keep-network/keep-core/pkg/protocol/group"
 	"github.com/keep-network/keep-core/pkg/tecdsa"
+
+	"github.com/keep-network/keep-common/pkg/persistence"
 )
 
 // multiOperatorTestChain gives each simulated node an independent operator
@@ -237,5 +241,57 @@ func TestMultiOperatorSigningAndTerminatedWalletArchival(t *testing.T) {
 	close(postArchiveErrors)
 	for err := range postArchiveErrors {
 		t.Error(err)
+	}
+}
+
+
+// TestWalletRegistry_ArchivedSignerNotLoadedAfterRestart uses the real disk
+// persistence backend to model a process restart after wallet archival. The
+// archived share remains on disk, but a fresh registry must not load it into
+// the active signer cache.
+func TestWalletRegistry_ArchivedSignerNotLoadedAfterRestart(t *testing.T) {
+	storageDir := t.TempDir()
+	persistenceHandle, err := persistence.NewProtectedDiskHandle(storageDir)
+	if err != nil {
+		t.Fatalf("failed to create disk persistence: [%v]", err)
+	}
+
+	chain := Connect()
+	originalRegistry, err := newWalletRegistry(
+		persistenceHandle,
+		chain.CalculateWalletID,
+	)
+	if err != nil {
+		t.Fatalf("failed to create original wallet registry: [%v]", err)
+	}
+
+	signer := createMockSigner(t)
+	if err := originalRegistry.registerSigner(signer); err != nil {
+		t.Fatalf("failed to persist wallet signer: [%v]", err)
+	}
+
+	walletPublicKeyHash := bitcoin.PublicKeyHash(signer.wallet.publicKey)
+	walletStorageKey := getWalletStorageKey(signer.wallet.publicKey)
+	if err := originalRegistry.archiveWallet(walletPublicKeyHash); err != nil {
+		t.Fatalf("failed to archive wallet: [%v]", err)
+	}
+
+	// The archive is retained on disk; archival is not secure deletion.
+	archivedWalletPath := filepath.Join(storageDir, "archive", walletStorageKey)
+	if _, err := os.Stat(archivedWalletPath); err != nil {
+		t.Fatalf("expected archived wallet data to remain on disk: [%v]", err)
+	}
+
+	// A fresh registry models startup in a new process: it reads only the
+	// persistence backend's non-archived ReadAll view.
+	restartedRegistry, err := newWalletRegistry(
+		persistenceHandle,
+		chain.CalculateWalletID,
+	)
+	if err != nil {
+		t.Fatalf("failed to recreate wallet registry: [%v]", err)
+	}
+	if got := restartedRegistry.getSigners(signer.wallet.publicKey); len(got) != 0 {
+		t.Fatalf("expected no active signers after restart, got [%d]", len(got))
 	}
 }
