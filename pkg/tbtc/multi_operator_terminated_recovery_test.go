@@ -53,8 +53,9 @@ func (c *multiOperatorTestChain) GetOperatorID(
 // TestMultiOperatorSigningAndTerminatedWalletArchival models five independent
 // nodes, each holding exactly one share of the same 4-of-5 tECDSA group. It
 // first proves that the operators can jointly sign, then marks the wallet
-// terminated and verifies that archival removes each share from the active
-// wallet registry so the ordinary signing executor is no longer available.
+// terminated and archives it. It verifies that archival removes shares from
+// the active registry, while separately checking whether already-cached
+// signing executors can still use their in-memory shares.
 func TestMultiOperatorSigningAndTerminatedWalletArchival(t *testing.T) {
 	const groupSize = 5
 
@@ -206,6 +207,35 @@ func TestMultiOperatorSigningAndTerminatedWalletArchival(t *testing.T) {
 		if got := node.walletRegistry.getSigners(walletPublicKey); len(got) != 0 {
 			t.Errorf("operator %d still has %d active signers after archival", i+1, len(got))
 		}
+	}
 
+	// Archival removes signers from the registry, but getSigningExecutor is
+	// cache-first. Verify whether executors created before termination can
+	// still complete a threshold signature after the wallet is archived.
+	postArchiveMessage := big.NewInt(20261129)
+	postArchiveErrors := make(chan error, groupSize)
+	for i := range executors {
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			signature, _, _, err := executors[index].sign(ctx, postArchiveMessage, 0)
+			if err != nil {
+				postArchiveErrors <- fmt.Errorf("operator %d post-archive signing failed: %w", index+1, err)
+				return
+			}
+			if signature == nil || !ecdsa.Verify(
+				walletPublicKey,
+				postArchiveMessage.Bytes(),
+				signature.R,
+				signature.S,
+			) {
+				postArchiveErrors <- fmt.Errorf("operator %d returned an invalid post-archive group signature", index+1)
+			}
+		}(i)
+	}
+	wait.Wait()
+	close(postArchiveErrors)
+	for err := range postArchiveErrors {
+		t.Error(err)
 	}
 }
