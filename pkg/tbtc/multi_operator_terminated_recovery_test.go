@@ -3,6 +3,7 @@ package tbtc
 import (
 	"context"
 	"crypto/ecdsa"
+	"fmt"
 	"math/big"
 	"sync"
 	"testing"
@@ -160,8 +161,6 @@ func TestMultiOperatorSigningAndTerminatedWalletArchival(t *testing.T) {
 	defer cancel()
 
 	message := big.NewInt(20261128)
-	signatures := make([]*ecdsa.Signature, 0, groupSize)
-	_ = signatures
 	var wait sync.WaitGroup
 	errors := make(chan error, groupSize)
 	for i := range executors {
