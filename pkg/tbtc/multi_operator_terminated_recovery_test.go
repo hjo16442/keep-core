@@ -340,7 +340,6 @@ func TestWalletRegistry_ArchivedSignerNotLoadedAfterRestart(t *testing.T) {
 	}
 }
 
-
 // TestMultiOperatorArchivedSharesAreRearchivedOnEveryRestart verifies the
 // complete persisted-share lifecycle for all five operators. Each operator
 // stores one share on disk, the terminated wallet is archived, and a manual
