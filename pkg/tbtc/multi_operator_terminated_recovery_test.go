@@ -270,6 +270,14 @@ func TestWalletRegistry_ArchivedSignerNotLoadedAfterRestart(t *testing.T) {
 	}
 
 	walletPublicKeyHash := bitcoin.PublicKeyHash(signer.wallet.publicKey)
+	walletID, err := chain.CalculateWalletID(signer.wallet.publicKey)
+	if err != nil {
+		t.Fatalf("failed to calculate wallet ID: [%v]", err)
+	}
+	chain.setWallet(walletPublicKeyHash, &WalletChainData{
+		EcdsaWalletID: walletID,
+		State:         StateTerminated,
+	})
 	walletStorageKey := getWalletStorageKey(signer.wallet.publicKey)
 	if err := originalRegistry.archiveWallet(walletPublicKeyHash); err != nil {
 		t.Fatalf("failed to archive wallet: [%v]", err)
@@ -310,5 +318,24 @@ func TestWalletRegistry_ArchivedSignerNotLoadedAfterRestart(t *testing.T) {
 	}
 	if got := recoveredRegistry.getSigners(signer.wallet.publicKey); len(got) != 1 {
 		t.Fatalf("expected one signer after manual restore, got [%d]", len(got))
+	}
+
+	// A normal node startup runs archiveClosedWallets immediately after
+	// loading the registry. Since the wallet is still Terminated and therefore
+	// no longer registered on chain, merely moving the retained directory back
+	// to current is insufficient: startup archives it again before executors
+	// can be created.
+	startupNode := &node{
+		chain:         chain,
+		walletRegistry: recoveredRegistry,
+	}
+	if err := startupNode.archiveClosedWallets(); err != nil {
+		t.Fatalf("startup archival check failed: [%v]", err)
+	}
+	if got := recoveredRegistry.getSigners(signer.wallet.publicKey); len(got) != 0 {
+		t.Fatalf("expected terminated signer to be re-archived on startup, got [%d] active signers", len(got))
+	}
+	if _, err := os.Stat(archivedWalletPath); err != nil {
+		t.Fatalf("expected startup to move restored signer back to archive: [%v]", err)
 	}
 }
