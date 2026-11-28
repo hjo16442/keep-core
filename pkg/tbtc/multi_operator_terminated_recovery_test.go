@@ -401,6 +401,9 @@ func TestMultiOperatorArchivedSharesAreRearchivedOnEveryRestart(t *testing.T) {
 
 		storageDir := filepath.Join(t.TempDir(), fmt.Sprintf("operator-%d", i+1))
 		storageDirs[i] = storageDir
+		if err := os.MkdirAll(storageDir, 0o700); err != nil {
+			t.Fatalf("operator %d failed to create storage directory: [%v]", i+1, err)
+		}
 		persistenceHandle, err := persistence.NewProtectedDiskHandle(storageDir)
 		if err != nil {
 			t.Fatalf("operator %d failed to create disk persistence: [%v]", i+1, err)
