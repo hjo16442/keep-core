@@ -23,8 +23,8 @@ import (
 // identity while sharing the same in-memory chain state.
 type multiOperatorTestChain struct {
 	*localChain
-	privateKey *operator.PrivateKey
-	operatorID chain.OperatorID
+	privateKey  *operator.PrivateKey
+	operatorID  chain.OperatorID
 	operatorIDs map[chain.Address]chain.OperatorID
 }
 
