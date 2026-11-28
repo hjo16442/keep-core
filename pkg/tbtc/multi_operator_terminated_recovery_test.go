@@ -244,7 +244,6 @@ func TestMultiOperatorSigningAndTerminatedWalletArchival(t *testing.T) {
 	}
 }
 
-
 // TestWalletRegistry_ArchivedSignerNotLoadedAfterRestart uses the real disk
 // persistence backend to model a process restart after wallet archival. The
 // archived share remains on disk, but a fresh registry must not load it into
