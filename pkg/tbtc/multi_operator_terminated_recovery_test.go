@@ -375,7 +375,7 @@ func TestMultiOperatorArchivedSharesAreRearchivedOnEveryRestart(t *testing.T) {
 	sharedChain := ConnectWithKey(operatorKeys[0])
 	signers := make([]*signer, groupSize)
 	nodes := make([]*node, groupSize)
-	persistenceHandles := make([]*persistence.ProtectedDiskHandle, groupSize)
+	persistenceHandles := make([]persistence.ProtectedHandle, groupSize)
 	storageDirs := make([]string, groupSize)
 	walletPublicKey := tecdsa.NewPrivateKeyShare(shareFixtures[0]).PublicKey()
 	walletPublicKeyHash := bitcoin.PublicKeyHash(walletPublicKey)
