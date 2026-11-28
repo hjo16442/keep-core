@@ -376,6 +376,7 @@ func TestMultiOperatorArchivedSharesAreRearchivedOnEveryRestart(t *testing.T) {
 	signers := make([]*signer, groupSize)
 	nodes := make([]*node, groupSize)
 	persistenceHandles := make([]*persistence.ProtectedDiskHandle, groupSize)
+	storageDirs := make([]string, groupSize)
 	walletPublicKey := tecdsa.NewPrivateKeyShare(shareFixtures[0]).PublicKey()
 	walletPublicKeyHash := bitcoin.PublicKeyHash(walletPublicKey)
 
@@ -400,6 +401,7 @@ func TestMultiOperatorArchivedSharesAreRearchivedOnEveryRestart(t *testing.T) {
 		}
 
 		storageDir := filepath.Join(t.TempDir(), fmt.Sprintf("operator-%d", i+1))
+		storageDirs[i] = storageDir
 		persistenceHandle, err := persistence.NewProtectedDiskHandle(storageDir)
 		if err != nil {
 			t.Fatalf("operator %d failed to create disk persistence: [%v]", i+1, err)
@@ -449,8 +451,8 @@ func TestMultiOperatorArchivedSharesAreRearchivedOnEveryRestart(t *testing.T) {
 	// back to current storage and verify that normal startup archives it again.
 	for i := 0; i < groupSize; i++ {
 		walletStorageKey := getWalletStorageKey(walletPublicKey)
-		storageDir := filepath.Join(t.TempDir(), fmt.Sprintf("restart-%d", i+1))
-		_ = storageDir
+		archivedWalletPath := filepath.Join(storageDirs[i], "archive", walletStorageKey)
+		currentWalletPath := filepath.Join(storageDirs[i], "current", walletStorageKey)
 
 		restartedRegistry, err := newWalletRegistry(
 			persistenceHandles[i],
@@ -463,9 +465,38 @@ func TestMultiOperatorArchivedSharesAreRearchivedOnEveryRestart(t *testing.T) {
 			t.Fatalf("operator %d loaded [%d] archived shares after restart", i+1, len(got))
 		}
 
-		// ProtectedDiskHandle stores archived wallets under archive/<key>.
-		// The test uses the same handle and its root directory, so obtain the
-		// paths from the original storage root by recording it below.
-		_ = walletStorageKey
+		if err := os.Rename(archivedWalletPath, currentWalletPath); err != nil {
+			t.Fatalf("operator %d failed to restore archived share directory: [%v]", i+1, err)
+		}
+
+		restoredRegistry, err := newWalletRegistry(
+			persistenceHandles[i],
+			sharedChain.CalculateWalletID,
+		)
+		if err != nil {
+			t.Fatalf("operator %d failed to load manually restored share: [%v]", i+1, err)
+		}
+		if got := restoredRegistry.getSigners(walletPublicKey); len(got) != 1 {
+			t.Fatalf("operator %d expected one manually restored share, got [%d]", i+1, len(got))
+		}
+
+		startupNode := &node{
+			chain: &multiOperatorTestChain{
+				localChain:  sharedChain,
+				privateKey:  operatorKeys[i],
+				operatorID:  chain.OperatorID(i + 1),
+				operatorIDs: operatorIDs,
+			},
+			walletRegistry: restoredRegistry,
+		}
+		if err := startupNode.archiveClosedWallets(); err != nil {
+			t.Fatalf("operator %d startup archival failed: [%v]", i+1, err)
+		}
+		if got := restoredRegistry.getSigners(walletPublicKey); len(got) != 0 {
+			t.Fatalf("operator %d retained [%d] active shares after startup archival", i+1, len(got))
+		}
+		if _, err := os.Stat(archivedWalletPath); err != nil {
+			t.Fatalf("operator %d expected restored share to be archived again: [%v]", i+1, err)
+		}
 	}
 }
